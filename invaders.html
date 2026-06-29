@@ -176,10 +176,14 @@ let wave = 1;
 let inWave = false;
 
 function spawnWave() {
-    if (inWave) return;
+    // Reset boss state for normal waves
     bossActive = false;
+    boss = null;
 
     enemies = [];
+    bullets = [];
+    loot = [];
+
     const rows = 3 + Math.floor(wave / 2);
     const cols = 10;
     const startY = 2;
@@ -191,12 +195,13 @@ function spawnWave() {
                 x: startX + c,
                 y: startY + r,
                 hp: 1 + Math.floor(wave / 3),
-                value: 2 + wave,
+                value: 2 + wave
             });
         }
     }
 
     enemyDir = 1;
+    enemyStepTimer = 0;
     enemyStepInterval = Math.max(150, 600 - wave * 30);
     inWave = true;
 }
@@ -396,9 +401,11 @@ window.addEventListener("focus", () => {
    =========================== */
 
 function updateGame(dt) {
+    // Move bullets
     bullets.forEach(b => b.y += b.dy);
-    bullets = bullets.filter(b => b.y >= 0);
+    bullets = bullets.filter(b => b.y >= 0 && b.y < HEIGHT);
 
+    // Enemy movement
     enemyStepTimer += dt;
     if (enemyStepTimer > enemyStepInterval) {
         enemyStepTimer = 0;
@@ -413,8 +420,8 @@ function updateGame(dt) {
         }
     }
 
-    // Enemy shooting (FIX ADDED)
-    if (enemies.length > 0 && Math.random() < 0.02) {
+    // Enemy shooting (guaranteed when enemies exist)
+    if (enemies.length > 0 && Math.random() < 0.03) {
         const shooter = enemies[Math.floor(Math.random() * enemies.length)];
         bullets.push({
             x: shooter.x,
@@ -425,7 +432,9 @@ function updateGame(dt) {
         });
     }
 
+    // Bullet vs enemy
     bullets.forEach(b => {
+        if (b.enemyShot) return;
         enemies.forEach(e => {
             if (e.x === b.x && e.y === b.y) {
                 e.hp -= b.dmg;
@@ -434,6 +443,7 @@ function updateGame(dt) {
         });
     });
 
+    // Enemy death + loot
     enemies = enemies.filter(e => {
         if (e.hp <= 0) {
             credits += e.value;
@@ -452,23 +462,21 @@ function updateGame(dt) {
         return true;
     });
 
+    // Enemy reaching player
     enemies.forEach(e => {
         if (e.y >= player.y) {
             if (shieldCharges > 0) {
                 shieldCharges--;
-                credits = 0;
-                saveGame();
-                e.y = -999;
-            } else {
-                credits = 0;
-                saveGame();
-                e.y = -999;
             }
+            credits = 0;
+            saveGame();
+            e.y = -999;
         }
     });
 
-    enemies = enemies.filter(e => e.y >= 0);
+    enemies = enemies.filter(e => e.y >= 0 && e.y < HEIGHT);
 
+    // Loot pickup
     loot = loot.filter(l => {
         if (l.x === player.x && l.y === player.y) {
             if (l.type === "C") credits += 5;
@@ -479,7 +487,7 @@ function updateGame(dt) {
         return true;
     });
 
-    // FIXED WAVE PROGRESSION
+    // Wave progression (normal waves only)
     if (inWave && enemies.length === 0 && !bossActive) {
         inWave = false;
 
@@ -487,7 +495,7 @@ function updateGame(dt) {
             startBossWave();
         } else {
             wave++;
-            spawnWave();   // FIX: next wave actually starts
+            spawnWave();
             state = "game";
         }
     }
