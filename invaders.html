@@ -115,7 +115,7 @@ const UPGRADE_DATA = [
   }
 ];
 
-let upgrades = {}; // id -> level
+let upgrades = {}; 
 let credits = 0;
 
 /* ===========================
@@ -198,6 +198,13 @@ function refreshShield() {
 }
 
 /* ===========================
+   LOOT SYSTEM
+   =========================== */
+
+let loot = []; 
+let inventory = { loot: 0, cores: 0 };
+
+/* ===========================
    WAVE SYSTEM (UNCHANGED)
    =========================== */
 
@@ -205,11 +212,14 @@ let wave = 1;
 let inWave = false;
 
 function spawnWave() {
+    bossActive = false;
+
     enemies = [];
     const rows = 3 + Math.floor(wave / 2);
     const cols = 10;
     const startY = 2;
     const startX = Math.floor((WIDTH - cols) / 2);
+
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
             enemies.push({
@@ -220,13 +230,14 @@ function spawnWave() {
             });
         }
     }
+
     enemyDir = 1;
     enemyStepInterval = Math.max(150, 600 - wave * 30);
     inWave = true;
 }
 
 /* ===========================
-   BOSSES (OPTION C)
+   BOSSES
    =========================== */
 
 const BOSSES = [
@@ -461,6 +472,16 @@ function updateGame(dt) {
     enemies = enemies.filter(e => {
         if (e.hp <= 0) {
             credits += e.value;
+
+            const roll = Math.random();
+            if (roll < 0.10) {
+                loot.push({ x: e.x, y: e.y, type: "C" });
+            } else if (roll < 0.15) {
+                loot.push({ x: e.x, y: e.y, type: "$" });
+            } else if (roll < 0.17) {
+                loot.push({ x: e.x, y: e.y, type: "*" });
+            }
+
             return false;
         }
         return true;
@@ -482,6 +503,16 @@ function updateGame(dt) {
     });
 
     enemies = enemies.filter(e => e.y >= 0);
+
+    loot = loot.filter(l => {
+        if (l.x === player.x && l.y === player.y) {
+            if (l.type === "C") credits += 5;
+            if (l.type === "$") inventory.loot++;
+            if (l.type === "*") inventory.cores++;
+            return false;
+        }
+        return true;
+    });
 
     if (inWave && enemies.length === 0 && !bossActive) {
         inWave = false;
@@ -597,6 +628,15 @@ function renderBoss() {
         }
     });
 
+    loot.forEach(l => {
+        if (l.x >= 0 && l.x < WIDTH && l.y >= 0 && l.y < HEIGHT) {
+            const color = l.type === "*" ? "magenta" :
+                          l.type === "$" ? "yellow" :
+                          "lime";
+            grid[l.y][l.x] = col(l.type, color);
+        }
+    });
+
     const hud = `BOSS HP ${boss.hp}   Credits ${credits}   Shield ${shieldCharges}`;
     for (let i = 0; i < hud.length && i < WIDTH; i++) {
         grid[0][i] = col(hud[i], "lime");
@@ -611,6 +651,8 @@ function renderShop() {
     lines.push("|             UPGRADE SHOP             |");
     lines.push("+--------------------------------------+");
     lines.push(`| Credits: ${credits.toString().padEnd(28)} |`);
+    lines.push(`| Loot: ${inventory.loot.toString().padEnd(30)} |`);
+    lines.push(`| Cores: ${inventory.cores.toString().padEnd(29)} |`);
     lines.push("+--------------------------------------+");
 
     UPGRADE_DATA.forEach((u, i) => {
@@ -632,10 +674,6 @@ function renderShop() {
     gameEl.innerHTML = lines.join("\n");
 }
 
-/* ===========================
-   RENDER GAME (NORMAL WAVES)
-   =========================== */
-
 function renderGame() {
     let grid = Array.from({ length: HEIGHT }, () =>
         Array.from({ length: WIDTH }, () => " ")
@@ -652,6 +690,15 @@ function renderGame() {
     bullets.forEach(b => {
         if (b.x >= 0 && b.x < WIDTH && b.y >= 0 && b.y < HEIGHT) {
             grid[b.y][b.x] = col("|", b.enemyShot ? "red" : "white");
+        }
+    });
+
+    loot.forEach(l => {
+        if (l.x >= 0 && l.x < WIDTH && l.y >= 0 && l.y < HEIGHT) {
+            const color = l.type === "*" ? "magenta" :
+                          l.type === "$" ? "yellow" :
+                          "lime";
+            grid[l.y][l.x] = col(l.type, color);
         }
     });
 
