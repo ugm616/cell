@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>ASCII Space Invaders RPG</title>
+<style>
+    body {
+        margin: 0;
+        background: black;
+        color: white;
+        font-family: monospace;
+        overflow: hidden;
+    }
+    #game {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        white-space: pre;
+        font-size: 18px;
+        line-height: 18px;
+    }
+</style>
+</head>
+<body>
+
+<div id="game"></div>
+
+<script>
+/* ===========================
+   GAME STATE
+   =========================== */
+
+const gameEl = document.getElementById("game");
+const WIDTH = 40;
+const HEIGHT = 24;
+
+let state = "loading"; // loading, title, game, shop, pause, bossIntro, boss
+let loadingDots = 0;
+
+setTimeout(() => { state = "title"; }, 1500);
+
+/* ===========================
+   HELPERS
+   =========================== */
+
+function col(text, color) {
+    return `<span style="color:${color}">${text}</span>`;
+}
+
+function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+}
+
+/* ===========================
+   UPGRADE DATA (JSON ARRAY)
+   =========================== */
+
+const UPGRADE_DATA = [
+  {
+    id: "damage",
+    name: "Damage",
+    icon: "^",
+    category: "offense",
+    description: "Increase bullet damage.",
+    level: 0,
+    max: 10,
+    baseCost: 10,
+    costScaling: 1.5,
+    effect: 1.2,
+    unlocks: ["piercingShot"],
+    tags: ["combat","weapon"]
+  },
+  {
+    id: "fireRate",
+    name: "Fire Rate",
+    icon: ">",
+    category: "offense",
+    description: "Shoot faster.",
+    level: 0,
+    max: 10,
+    baseCost: 15,
+    costScaling: 1.4,
+    effect: 0.9,
+    unlocks: [],
+    tags: ["combat","weapon"]
+  },
+  {
+    id: "multiShot",
+    name: "Multi-Shot",
+    icon: "*",
+    category: "offense",
+    description: "Fire additional bullets.",
+    level: 0,
+    max: 5,
+    baseCost: 50,
+    costScaling: 2.0,
+    effect: 1,
+    unlocks: [],
+    tags: ["combat","weapon"]
+  },
+  {
+    id: "shield",
+    name: "Shield",
+    icon: "#",
+    category: "defense",
+    description: "Absorb one hit.",
+    level: 0,
+    max: 5,
+    baseCost: 20,
+    costScaling: 1.6,
+    effect: 1,
+    unlocks: [],
+    tags: ["survivability"]
+  }
+];
+
+let upgrades = {}; // id -> level
+let credits = 0;
+
+/* ===========================
+   SAVE / LOAD
+   =========================== */
+
+const SAVE_KEY = "asciiInvadersSave";
+
+function loadSave() {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) {
+        UPGRADE_DATA.forEach(u => upgrades[u.id] = 0);
+        credits = 0;
+        return;
+    }
+    try {
+        const data = JSON.parse(raw);
+        credits = data.credits || 0;
+        UPGRADE_DATA.forEach(u => {
+            upgrades[u.id] = (data.upgrades && data.upgrades[u.id]) || 0;
+            u.level = upgrades[u.id];
+        });
+    } catch {
+        UPGRADE_DATA.forEach(u => upgrades[u.id] = 0);
+        credits = 0;
+    }
+}
+
+function saveGame() {
+    const data = {
+        credits,
+        upgrades: {}
+    };
+    UPGRADE_DATA.forEach(u => {
+        data.upgrades[u.id] = u.level;
+    });
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+}
+
+/* ===========================
+   PLAYER / ENEMIES / BULLETS
+   =========================== */
+
+let player = { x: Math.floor(WIDTH / 2), y: HEIGHT - 2 };
+let bullets = [];
+let enemies = [];
+let enemyDir = 1;
+let enemyStepTimer = 0;
+let enemyStepInterval = 600;
+
+let lastShot = 0;
+let baseFireDelay = 400;
+
+function currentFireDelay() {
+    const lvl = upgrades["fireRate"] || 0;
+    let delay = baseFireDelay;
+    const u = UPGRADE_DATA.find(u=>u.id==="fireRate");
+    for (let i = 0; i < lvl; i++) delay *= u.effect;
+    return delay;
+}
+
+function currentDamage() {
+    const base = 1;
+    const lvl = upgrades["damage"] || 0;
+    let dmg = base;
+    const u = UPGRADE_DATA.find(u=>u.id==="damage");
+    for (let i = 0; i < lvl; i++) dmg *= u.effect;
+    return Math.round(dmg);
+}
+
+function currentMultiShot() {
+    const lvl = upgrades["multiShot"] || 0;
+    return 1 + lvl;
+}
+
+let shieldCharges = 0;
+function refreshShield() {
+    const lvl = upgrades["shield"] || 0;
+    shieldCharges = lvl;
+}
+
+/* ===========================
+   WAVE SYSTEM (UNCHANGED)
+   =========================== */
+
+let wave = 1;
+let inWave = false;
+
+function spawnWave() {
+    enemies = [];
+    const rows = 3 + Math.floor(wave / 2);
+    const cols = 10;
+    const startY = 2;
+    const startX = Math.floor((WIDTH - cols) / 2);
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            enemies.push({
+                x: startX + c,
+                y: startY + r,
+                hp: 1 + Math.floor(wave / 3),
+                value: 2 + wave,
+            });
+        }
+    }
+    enemyDir = 1;
+    enemyStepInterval = Math.max(150, 600 - wave * 30);
+    inWave = true;
+}
+
+/* ===========================
+   BOSSES (OPTION C)
+   =========================== */
+
+const BOSSES = [
+    {
+        id: "megaInvader",
+        name: "MEGA INVADER",
+        ascii: [
+            "   ███   ",
+            " ███████ ",
+            "███ V ███",
+            " ███████ ",
+            "   ███   "
+        ],
+        color: "red",
+        attackType: "spread"
+    },
+    {
+        id: "titanInvader",
+        name: "TITAN INVADER",
+        ascii: [
+            "  ███████  ",
+            " ██  V  ██ ",
+            "███ ### ███",
+            " ██  V  ██ ",
+            "  ███████  "
+        ],
+        color: "red",
+        attackType: "beam"
+    }
+];
+
+let boss = null;
+let bossActive = false;
+let bossAttackTimer = 0;
+
+function bossHPForWave(wave) {
+    const tier = wave / 5;
+    return Math.floor(50 * Math.pow(1.25, tier));
+}
+
+function startBossWave() {
+    bossActive = true;
+    const data = BOSSES[(wave / 5 - 1) % BOSSES.length];
+
+    boss = {
+        ...data,
+        x: Math.floor(WIDTH / 2),
+        y: 4,
+        hp: bossHPForWave(wave),
+        value: Math.floor(bossHPForWave(wave) / 2)
+    };
+
+    state = "bossIntro";
+}
+
+function updateBoss(dt) {
+    if (!bossActive || !boss) return;
+
+    bossAttackTimer += dt;
+
+    if (bossAttackTimer > 1500) {
+        bossAttackTimer = 0;
+        bossAttack(boss.attackType);
+    }
+
+    boss.x += Math.sin(Date.now() / 1000) * 0.2;
+    boss.x = clamp(Math.floor(boss.x), 4, WIDTH - 4);
+}
+
+function bossAttack(type) {
+    if (type === "spread") {
+        for (let dx = -2; dx <= 2; dx++) {
+            bullets.push({
+                x: boss.x + dx,
+                y: boss.y + 4,
+                dy: 1,
+                dmg: 1,
+                enemyShot: true
+            });
+        }
+    }
+
+    if (type === "beam") {
+        for (let y = boss.y + 4; y < HEIGHT; y++) {
+            bullets.push({
+                x: boss.x,
+                y,
+                dy: 0,
+                dmg: 2,
+                enemyShot: true
+            });
+        }
+    }
+}
+
+/* ===========================
+   SHOP
+   =========================== */
+
+let shopIndex = 0;
+
+function upgradeCost(u) {
+    return Math.floor(u.baseCost * Math.pow(u.costScaling, u.level));
+}
+
+function canBuy(u) {
+    return u.level < u.max && credits >= upgradeCost(u);
+}
+
+function buyUpgrade(u) {
+    if (!canBuy(u)) return;
+    credits -= upgradeCost(u);
+    u.level++;
+    upgrades[u.id] = u.level;
+    if (u.id === "shield") refreshShield();
+    saveGame();
+}
+
+/* ===========================
+   INPUT
+   =========================== */
+
+document.addEventListener("keydown", e => {
+    if (state === "title" && e.code === "Enter") {
+        loadSave();
+        refreshShield();
+        state = "game";
+        spawnWave();
+        return;
+    }
+
+    if (state === "bossIntro" && e.code === "Enter") {
+        state = "boss";
+        return;
+    }
+
+    if (state === "game") {
+        if (e.code === "ArrowLeft") {
+            player.x = clamp(player.x - 1, 1, WIDTH - 2);
+        }
+        if (e.code === "ArrowRight") {
+            player.x = clamp(player.x + 1, 1, WIDTH - 2);
+        }
+        if (e.code === "Space") {
+            const now = Date.now();
+            if (now - lastShot > currentFireDelay()) {
+                lastShot = now;
+                const shots = currentMultiShot();
+                for (let i = 0; i < shots; i++) {
+                    bullets.push({
+                        x: player.x,
+                        y: player.y - 1,
+                        dy: -1,
+                        dmg: currentDamage()
+                    });
+                }
+            }
+        }
+        if (e.code === "KeyU") {
+            state = "shop";
+            shopIndex = 0;
+        }
+    } else if (state === "shop") {
+        if (e.code === "KeyW") {
+            shopIndex = (shopIndex - 1 + UPGRADE_DATA.length) % UPGRADE_DATA.length;
+        }
+        if (e.code === "KeyS") {
+            shopIndex = (shopIndex + 1) % UPGRADE_DATA.length;
+        }
+        if (e.code === "Enter") {
+            buyUpgrade(UPGRADE_DATA[shopIndex]);
+        }
+        if (e.code === "Escape") {
+            state = "game";
+        }
+    }
+});
+
+/* ===========================
+   AUTO-PAUSE SYSTEM
+   =========================== */
+
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden && state === "game") {
+        state = "pause";
+    }
+});
+
+window.addEventListener("blur", () => {
+    if (state === "game") {
+        state = "pause";
+    }
+});
+
+window.addEventListener("focus", () => {
+    if (state === "pause") {
+        state = "game";
+    }
+});
+
+/* ===========================
+   UPDATE
+   =========================== */
+
+function updateGame(dt) {
+    bullets.forEach(b => b.y += b.dy);
+    bullets = bullets.filter(b => b.y >= 0);
+
+    enemyStepTimer += dt;
+    if (enemyStepTimer > enemyStepInterval) {
+        enemyStepTimer = 0;
+        let hitWall = false;
+        enemies.forEach(e => {
+            e.x += enemyDir;
+            if (e.x <= 1 || e.x >= WIDTH - 2) hitWall = true;
+        });
+        if (hitWall) {
+            enemyDir *= -1;
+            enemies.forEach(e => e.y += 1);
+        }
+    }
+
+    bullets.forEach(b => {
+        enemies.forEach(e => {
+            if (e.x === b.x && e.y === b.y) {
+                e.hp -= b.dmg;
+                b.y = -999;
+            }
+        });
+    });
+
+    enemies = enemies.filter(e => {
+        if (e.hp <= 0) {
+            credits += e.value;
+            return false;
+        }
+        return true;
+    });
+
+    enemies.forEach(e => {
+        if (e.y >= player.y) {
+            if (shieldCharges > 0) {
+                shieldCharges--;
+                credits = 0;
+                saveGame();
+                e.y = -999;
+            } else {
+                credits = 0;
+                saveGame();
+                e.y = -999;
+            }
+        }
+    });
+
+    enemies = enemies.filter(e => e.y >= 0);
+
+    if (inWave && enemies.length === 0 && !bossActive) {
+        inWave = false;
+
+        if (wave % 5 === 0) {
+            startBossWave();
+        } else {
+            wave++;
+            state = "shop";
+            shopIndex = 0;
+        }
+    }
+}
+
+/* ===========================
+   BOSS DAMAGE HANDLING
+   =========================== */
+
+function updateBossDamage() {
+    bullets.forEach(b => {
+        if (b.enemyShot) return;
+
+        const bx = b.x;
+        const by = b.y;
+
+        boss.ascii.forEach((row, i) => {
+            for (let j = 0; j < row.length; j++) {
+                const x = boss.x - Math.floor(row.length / 2) + j;
+                const y = boss.y + i;
+
+                if (x === bx && y === by) {
+                    boss.hp -= b.dmg;
+                    b.y = -999;
+                }
+            }
+        });
+
+        if (boss.hp <= 0) {
+            bossActive = false;
+            credits += boss.value;
+            wave++;
+            state = "shop";
+            shopIndex = 0;
+        }
+    });
+}
+
+/* ===========================
+   RENDER
+   =========================== */
+
+function renderLoading() {
+    loadingDots = (loadingDots + 1) % 4;
+    gameEl.innerHTML = `Loading${".".repeat(loadingDots)}`;
+}
+
+function renderTitle() {
+    gameEl.innerHTML = `
+${"█".repeat(40)}
+█        ASCII SPACE INVADERS RPG       █
+${"█".repeat(40)}
+
+Press ENTER to begin
+
+Credits persist across runs.
+Upgrades are permanent.
+Losing a life resets current credits.
+`;
+}
+
+function renderPause() {
+    gameEl.innerHTML = `
+=== PAUSED ===
+
+The game paused because the tab lost focus.
+
+Return to this tab to continue.
+`;
+}
+
+function renderBossIntro() {
+    gameEl.innerHTML = `
+${"=".repeat(40)}
+        ${boss.name}
+${"=".repeat(40)}
+
+A massive invader approaches...
+
+Press ENTER to fight!
+`;
+}
+
+function renderBoss() {
+    let grid = Array.from({ length: HEIGHT }, () =>
+        Array.from({ length: WIDTH }, () => " ")
+    );
+
+    boss.ascii.forEach((row, i) => {
+        for (let j = 0; j < row.length; j++) {
+            const x = boss.x - Math.floor(row.length / 2) + j;
+            const y = boss.y + i;
+            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
+                grid[y][x] = col(row[j], boss.color);
+            }
+        }
+    });
+
+    grid[player.y][player.x] = col("^", "cyan");
+
+    bullets.forEach(b => {
+        if (b.x >= 0 && b.x < WIDTH && b.y >= 0 && b.y < HEIGHT) {
+            grid[b.y][b.x] = col("|", b.enemyShot ? "red" : "white");
+        }
+    });
+
+    const hud = `BOSS HP ${boss.hp}   Credits ${credits}   Shield ${shieldCharges}`;
+    for (let i = 0; i < hud.length && i < WIDTH; i++) {
+        grid[0][i] = col(hud[i], "lime");
+    }
+
+    gameEl.innerHTML = grid.map(r => r.join("")).join("\n");
+}
+
+function renderShop() {
+    let lines = [];
+    lines.push("+--------------------------------------+");
+    lines.push("|             UPGRADE SHOP             |");
+    lines.push("+--------------------------------------+");
+    lines.push(`| Credits: ${credits.toString().padEnd(28)} |`);
+    lines.push("+--------------------------------------+");
+
+            `| ${col(sel, "cyan")} ${col(u.icon, "yellow")} ${u.name.padEnd(12)} ${col(lvlText.padEnd(10), "white")} ${col(("Cost " + cost).padEnd(10), color)} |`
+        );
+    });
+
+    lines.push("+--------------------------------------+");
+    lines.push("| W/S = Move  Enter = Buy  Esc = Back |");
+    lines.push("+--------------------------------------+");
+
+    gameEl.innerHTML = lines.join("\n");
+}
+
+/* ===========================
+   RENDER GAME (NORMAL WAVES)
+   =========================== */
+
+function renderGame() {
+    let grid = Array.from({ length: HEIGHT }, () =>
+        Array.from({ length: WIDTH }, () => " ")
+    );
+
+    grid[player.y][player.x] = col("^", "cyan");
+
+    enemies.forEach(e => {
+        if (e.x >= 0 && e.x < WIDTH && e.y >= 0 && e.y < HEIGHT) {
+            grid[e.y][e.x] = col("V", "yellow");
+        }
+    });
+
+    bullets.forEach(b => {
+        if (b.x >= 0 && b.x < WIDTH && b.y >= 0 && b.y < HEIGHT) {
+            grid[b.y][b.x] = col("|", b.enemyShot ? "red" : "white");
+        }
+    });
+
+    const hud = `Wave ${wave}   Credits ${credits}   Shield ${shieldCharges}`;
+    for (let i = 0; i < hud.length && i < WIDTH; i++) {
+        grid[0][i] = col(hud[i], "lime");
+    }
+
+    gameEl.innerHTML = grid.map(row => row.join("")).join("\n");
+}
+
+/* ===========================
+   MAIN LOOP
+   =========================== */
+
+let lastTime = performance.now();
+
+function loop(now) {
+    const dt = now - lastTime;
+    lastTime = now;
+
+    if (state === "loading") {
+        renderLoading();
+    } else if (state === "title") {
+        renderTitle();
+    } else if (state === "pause") {
+        renderPause();
+    } else if (state === "bossIntro") {
+        renderBossIntro();
+    } else if (state === "boss") {
+        updateBoss(dt);
+        updateBossDamage();
+        renderBoss();
+    } else if (state === "game") {
+        updateGame(dt);
+        renderGame();
+    } else if (state === "shop") {
+        renderShop();
+    }
+
+    requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
