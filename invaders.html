@@ -27,22 +27,14 @@
 <div id="game"></div>
 
 <script>
-/* ===========================
-   GAME STATE
-   =========================== */
-
 const gameEl = document.getElementById("game");
 const WIDTH = 40;
 const HEIGHT = 24;
 
-let state = "loading"; // loading, title, game, shop, pause, bossIntro, boss
+let state = "loading";
 let loadingDots = 0;
 
 setTimeout(() => { state = "title"; }, 1500);
-
-/* ===========================
-   HELPERS
-   =========================== */
 
 function col(text, color) {
     return `<span style="color:${color}">${text}</span>`;
@@ -51,10 +43,6 @@ function col(text, color) {
 function clamp(v, min, max) {
     return Math.max(min, Math.min(max, v));
 }
-
-/* ===========================
-   UPGRADE DATA (JSON ARRAY)
-   =========================== */
 
 const UPGRADE_DATA = [
   {
@@ -67,9 +55,7 @@ const UPGRADE_DATA = [
     max: 10,
     baseCost: 10,
     costScaling: 1.5,
-    effect: 1.2,
-    unlocks: ["piercingShot"],
-    tags: ["combat","weapon"]
+    effect: 1.2
   },
   {
     id: "fireRate",
@@ -81,9 +67,7 @@ const UPGRADE_DATA = [
     max: 10,
     baseCost: 15,
     costScaling: 1.4,
-    effect: 0.9,
-    unlocks: [],
-    tags: ["combat","weapon"]
+    effect: 0.9
   },
   {
     id: "multiShot",
@@ -95,9 +79,7 @@ const UPGRADE_DATA = [
     max: 5,
     baseCost: 50,
     costScaling: 2.0,
-    effect: 1,
-    unlocks: [],
-    tags: ["combat","weapon"]
+    effect: 1
   },
   {
     id: "shield",
@@ -109,18 +91,12 @@ const UPGRADE_DATA = [
     max: 5,
     baseCost: 20,
     costScaling: 1.6,
-    effect: 1,
-    unlocks: [],
-    tags: ["survivability"]
+    effect: 1
   }
 ];
 
-let upgrades = {}; 
+let upgrades = {};
 let credits = 0;
-
-/* ===========================
-   SAVE / LOAD
-   =========================== */
 
 const SAVE_KEY = "asciiInvadersSave";
 
@@ -154,10 +130,6 @@ function saveGame() {
     });
     localStorage.setItem(SAVE_KEY, JSON.stringify(data));
 }
-
-/* ===========================
-   PLAYER / ENEMIES / BULLETS
-   =========================== */
 
 let player = { x: Math.floor(WIDTH / 2), y: HEIGHT - 2 };
 let bullets = [];
@@ -197,21 +169,14 @@ function refreshShield() {
     shieldCharges = lvl;
 }
 
-/* ===========================
-   LOOT SYSTEM
-   =========================== */
-
-let loot = []; 
+let loot = [];
 let inventory = { loot: 0, cores: 0 };
-
-/* ===========================
-   WAVE SYSTEM (UNCHANGED)
-   =========================== */
 
 let wave = 1;
 let inWave = false;
 
 function spawnWave() {
+    if (inWave) return;
     bossActive = false;
 
     enemies = [];
@@ -235,10 +200,6 @@ function spawnWave() {
     enemyStepInterval = Math.max(150, 600 - wave * 30);
     inWave = true;
 }
-
-/* ===========================
-   BOSSES
-   =========================== */
 
 const BOSSES = [
     {
@@ -333,10 +294,6 @@ function bossAttack(type) {
     }
 }
 
-/* ===========================
-   SHOP
-   =========================== */
-
 let shopIndex = 0;
 
 function upgradeCost(u) {
@@ -355,10 +312,6 @@ function buyUpgrade(u) {
     if (u.id === "shield") refreshShield();
     saveGame();
 }
-
-/* ===========================
-   INPUT
-   =========================== */
 
 document.addEventListener("keydown", e => {
     if (state === "title" && e.code === "Enter") {
@@ -460,6 +413,18 @@ function updateGame(dt) {
         }
     }
 
+    // Enemy shooting (FIX ADDED)
+    if (enemies.length > 0 && Math.random() < 0.02) {
+        const shooter = enemies[Math.floor(Math.random() * enemies.length)];
+        bullets.push({
+            x: shooter.x,
+            y: shooter.y + 1,
+            dy: 1,
+            dmg: 1,
+            enemyShot: true
+        });
+    }
+
     bullets.forEach(b => {
         enemies.forEach(e => {
             if (e.x === b.x && e.y === b.y) {
@@ -514,6 +479,7 @@ function updateGame(dt) {
         return true;
     });
 
+    // FIXED WAVE PROGRESSION
     if (inWave && enemies.length === 0 && !bossActive) {
         inWave = false;
 
@@ -521,8 +487,8 @@ function updateGame(dt) {
             startBossWave();
         } else {
             wave++;
-            state = "shop";
-            shopIndex = 0;
+            spawnWave();   // FIX: next wave actually starts
+            state = "game";
         }
     }
 }
@@ -554,8 +520,8 @@ function updateBossDamage() {
             bossActive = false;
             credits += boss.value;
             wave++;
-            state = "shop";
-            shopIndex = 0;
+            spawnWave();   // FIX: resume normal waves after boss
+            state = "game";
         }
     });
 }
