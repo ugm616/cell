@@ -613,6 +613,14 @@ function renderShop() {
     lines.push(`| Credits: ${credits.toString().padEnd(28)} |`);
     lines.push("+--------------------------------------+");
 
+    UPGRADE_DATA.forEach((u, i) => {
+        const sel = (i === shopIndex) ? ">" : " ";
+        const lvlText = `Lv ${u.level}/${u.max}`;
+        const cost = upgradeCost(u);
+        const can = canBuy(u);
+        const color = can ? "lime" : "gray";
+
+        lines.push(
             `| ${col(sel, "cyan")} ${col(u.icon, "yellow")} ${u.name.padEnd(12)} ${col(lvlText.padEnd(10), "white")} ${col(("Cost " + cost).padEnd(10), color)} |`
         );
     });
