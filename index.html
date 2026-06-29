@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>ASCII Cell Survivor</title>
+<style>
+    body {
+        margin: 0;
+        background: black;
+        color: white;
+        font-family: monospace;
+        overflow: hidden;
+    }
+    #game {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        white-space: pre;
+        font-size: 18px;
+        line-height: 18px;
+    }
+</style>
+</head>
+<body>
+
+<div id="game"></div>
+
+<script>
+/* ===========================
+   GAME STATES
+   =========================== */
+
+let state = "loading"; 
+let loadingDots = 0;
+let titleReady = false;
+
+setTimeout(() => {
+    state = "title";
+}, 2000);
+
+/* ===========================
+   BASIC ASCII ENGINE
+   =========================== */
+
+const WIDTH = 60;
+const HEIGHT = 30;
+let paused = false;
+
+const game = document.getElementById("game");
+
+// Colour helper
+function col(char, color) {
+    return `<span style="color:${color}">${char}</span>`;
+}
+
+// Tier colour helper
+function tierColor(level) {
+    if (level === 0) return "white";
+    if (level === 1) return "cyan";
+    if (level === 2) return "lime";
+    if (level === 3) return "yellow";
+    if (level === 4) return "orange";
+    return "red";
+}
+
+function iconColor(level) {
+    return tierColor(level);
+}
+
+// Heart position (centre)
+const heart = {
+    x: Math.floor(WIDTH / 2),
+    y: Math.floor(HEIGHT / 2),
+    char: "@",
+    fireAngle: 0
+};
+
+// Bullets
+let bullets = [];
+
+// Enemies (snake segments)
+let enemies = [];
+
+// Upgrade system
+let upgradeMenuOpen = false;
+let upgradeIndex = 0;
+
+let fireRate = 200;
+let bulletSpeed = 1.0;
+let heartShield = 0;
+let lastFire = 0;
+
+const upgrades = [
+    {
+        name: "Fire Rate",
+        icon: ">",
+        level: 0,
+        max: 5,
+        apply() {
+            this.level++;
+            fireRate *= 0.85;
+        }
+    },
+    {
+        name: "Bullet Speed",
+        icon: "*",
+        level: 0,
+        max: 5,
+        apply() {
+            this.level++;
+            bulletSpeed *= 1.2;
+        }
+    },
+    {
+        name: "Heart Shield",
+        icon: "#",
+        level: 0,
+        max: 3,
+        apply() {
+            this.level++;
+            heartShield++;
+        }
+    }
+];
+
+/* ===========================
+   SNAKE SPAWNING
+   =========================== */
+
+function spawnSnake() {
+    const length = 6 + Math.floor(Math.random() * 4);
+
+    const angle = Math.random() * Math.PI * 2;
+    const radius = Math.max(WIDTH, HEIGHT);
+
+    const snake = [];
+
+    for (let i = 0; i < length; i++) {
+        snake.push({
+            angle: angle,
+            radius: radius + i * 1.5,
+            hp: Math.floor(Math.random() * 3) + 1,
+            char: "o"
+        });
+    }
+
+    if (Math.random() < 0.3) {
+        snake[Math.floor(Math.random() * length)].char = "$";
+    }
+
+    enemies.push(snake);
+}
+
+/* ===========================
+   BULLETS
+   =========================== */
+
+function fireBullet() {
+    bullets.push({
+        x: heart.x,
+        y: heart.y,
+        dx: Math.cos(heart.fireAngle) * bulletSpeed,
+        dy: Math.sin(heart.fireAngle) * bulletSpeed,
+        char: "*"
+    });
+}
+
+/* ===========================
+   INPUT
+   =========================== */
+
+document.addEventListener("mousemove", e => {
+    if (state !== "game") return;
+    const rect = game.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    heart.fireAngle = Math.atan2(e.clientY - cy, e.clientX - cx);
+});
+
+document.addEventListener("touchmove", e => {
+    if (state !== "game") return;
+    const t = e.touches[0];
+    const rect = game.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    heart.fireAngle = Math.atan2(t.clientY - cy, t.clientX - cx);
+});
+
+document.addEventListener("keydown", e => {
+
+    if (state === "title" && e.code === "Enter") {
+        state = "game";
+        return;
+    }
+
+    if (state !== "game") return;
+
+    if (e.code === "Space") paused = !paused;
+
+    if (e.code === "KeyU") {
+        upgradeMenuOpen = !upgradeMenuOpen;
+        paused = upgradeMenuOpen;
+    }
+
+    if (upgradeMenuOpen) {
+        if (e.code === "KeyW") upgradeIndex = (upgradeIndex - 1 + upgrades.length) % upgrades.length;
+        if (e.code === "KeyS") upgradeIndex = (upgradeIndex + 1) % upgrades.length;
+
+        if (e.code === "Enter") {
+            const u = upgrades[upgradeIndex];
+            if (u.level < u.max) {
+                u.apply();
+            }
+            upgradeMenuOpen = false;
+            paused = false;
+        }
+    }
+});
+
+/* ===========================
+   ENEMY MOVEMENT
+   =========================== */
+
+function updateEnemies() {
+    enemies.forEach(snake => {
+        snake.forEach(seg => {
+            seg.angle += 0.02;
+            seg.radius -= 0.05;
+
+            seg.x = Math.floor(heart.x + Math.cos(seg.angle) * seg.radius);
+            seg.y = Math.floor(heart.y + Math.sin(seg.angle) * seg.radius);
+        });
+    });
+}
+
+/* ===========================
+   COLLISIONS
+   =========================== */
+
+function handleCollisions() {
+    bullets.forEach(b => {
+        enemies.forEach(snake => {
+            snake.forEach(seg => {
+                if (Math.floor(b.x) === Math.floor(seg.x) &&
+                    Math.floor(b.y) === Math.floor(seg.y)) {
+
+                    seg.hp--;
+                    b.x = -999;
+
+                    if (seg.hp <= 0) {
+                        seg.char = " ";
+                    }
+                }
+            });
+        });
+    });
+
+    enemies = enemies.map(snake => snake.filter(seg => seg.char !== " "));
+    enemies = enemies.filter(snake => snake.length > 0);
+}
+
+/* ===========================
+   UPGRADE MENU RENDER
+   =========================== */
+
+function renderUpgradeMenu() {
+    let lines = [];
+    lines.push("+--------------------------------------+");
+    lines.push("|            UPGRADE MENU              |");
+    lines.push("+--------------------------------------+");
+
+    upgrades.forEach((u, i) => {
+        const selected = (i === upgradeIndex) ? ">" : " ";
+        const selColor = (i === upgradeIndex) ? "cyan" : "white";
+
+        const tierText = `Lv ${u.level}/${u.max}`;
+        const tierCol = tierColor(u.level);
+
+        const icon = col(u.icon, iconColor(u.level));
+
+        lines.push(
+            `| ${col(selected, selColor)} ${icon} ${u.name.padEnd(18)} ${col(tierText, tierCol).padEnd(10)} |`
+        );
+    });
+
+    lines.push("+--------------------------------------+");
+    lines.push("|   W/S = Move   Enter = Upgrade       |");
+    lines.push("+--------------------------------------+");
+
+    return lines.join("\n");
+}
+
+/* ===========================
+   TITLE SCREEN
+   =========================== */
+
+function renderTitle() {
+    return `
+██████████████████████████████████████████████████████
+█                                                    █
+█                ASCII CELL SURVIVOR                █
+█                                                    █
+██████████████████████████████████████████████████████
+
+                Press ENTER to begin
+`;
+}
+
+/* ===========================
+   LOADING SCREEN
+   =========================== */
+
+function renderLoading() {
+    loadingDots = (loadingDots + 1) % 4;
+    return `
+Loading${".".repeat(loadingDots)}
+`;
+}
+
+/* ===========================
+   MAIN RENDER
+   =========================== */
+
+function render() {
+
+    if (state === "loading") {
+        game.innerHTML = renderLoading();
+        return;
+    }
+
+    if (state === "title") {
+        game.innerHTML = renderTitle();
+        return;
+    }
+
+    if (upgradeMenuOpen) {
+        game.innerHTML = renderUpgradeMenu();
+        return;
+    }
+
+    let grid = Array.from({ length: HEIGHT }, () =>
+        Array.from({ length: WIDTH }, () => " ")
+    );
+
+    grid[heart.y][heart.x] = col(heart.char, "red");
+
+    enemies.forEach(snake => {
+        snake.forEach(seg => {
+            const x = Math.floor(seg.x);
+            const y = Math.floor(seg.y);
+            if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
+                if (seg.char === "$") {
+                    grid[y][x] = col("$", "lime");
+                } else {
+                    grid[y][x] = col("o", "yellow");
+                }
+            }
+        });
+    });
+
+    bullets.forEach(b => {
+        const x = Math.floor(b.x);
+        const y = Math.floor(b.y);
+        if (x >= 0 && x < WIDTH && y >= 0 && y < HEIGHT) {
+            grid[y][x] = col("*", "cyan");
+        }
+    });
+
+    game.innerHTML = grid.map(row => row.join("")).join("\n");
+}
+
+/* ===========================
+   MAIN LOOP
+   =========================== */
+
+setInterval(() => {
+
+    if (state === "game" && !paused) {
+
+        if (Math.random() < 0.02) spawnSnake();
+
+        if (Date.now() - lastFire > fireRate) {
+            fireBullet();
+            lastFire = Date.now();
+        }
+
+        bullets.forEach(b => {
+            b.x += b.dx;
+            b.y += b.dy;
+        });
+
+        bullets = bullets.filter(b => b.x >= 0 && b.x < WIDTH && b.y >= 0 && b.y < HEIGHT);
+
+        updateEnemies();
+        handleCollisions();
+    }
+
+    render();
+
+}, 50);
+
+</script>
+</body>
+</html>
